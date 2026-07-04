@@ -173,6 +173,12 @@ def _default_tcp_factory(host):  # pragma: no cover - I/O réel, couvert par Doc
     return TCPInterface(hostname=host)
 
 
+def _default_ble_factory(address):  # pragma: no cover - matériel BLE requis
+    from meshtastic.ble_interface import BLEInterface
+
+    return BLEInterface(address=address)
+
+
 class FakeSink:
     """Sink de repli/tests : enregistre les envois (et les logue) sans émettre."""
 
@@ -205,13 +211,13 @@ class FakeSink:
         self._record("close", {})
 
 
-class TcpSink:
-    """Sink réel sur un node Meshtastic joignable en TCP (WiFi)."""
+class _Sink:
+    """Envoi via une interface meshtastic (TCP, BLE…). Les sous-classes ne
+    diffèrent que par la CRÉATION de l'interface — le reste est commun."""
 
-    def __init__(self, host, interface_factory=None, warmup=3.0):
-        factory = interface_factory or _default_tcp_factory
-        self._iface = factory(host)
-        self.my_num = self._iface.myInfo.my_node_num
+    def __init__(self, iface, warmup=3.0):
+        self._iface = iface
+        self.my_num = iface.myInfo.my_node_num
         # Le node PERD le premier paquet émis juste après connexion : on laisse la
         # liaison se stabiliser avant tout envoi (sinon la télémétrie, 1er envoi
         # de l'archive, ne partirait pas). Réglable via `connect_warmup`.
@@ -253,23 +259,39 @@ class TcpSink:
         self._iface.close()
 
 
+class TcpSink(_Sink):
+    """Node joignable en TCP (WiFi)."""
+
+    def __init__(self, host, interface_factory=None, warmup=3.0):
+        super().__init__((interface_factory or _default_tcp_factory)(host), warmup)
+
+
+class BleSink(_Sink):
+    """Node joignable en Bluetooth LE (nodes BT-only). Nécessite `bleak` + un BT
+    accessible NATIVEMENT (pas dans Docker sur macOS). `address` = MAC/nom/UUID BLE."""
+
+    def __init__(self, address, interface_factory=None, warmup=3.0):
+        super().__init__((interface_factory or _default_ble_factory)(address), warmup)
+
+
 def make_sink(cfg, interface_factory=None):
-    """Fabrique le sink selon la config. Repli en FakeSink si dry-run, transport
-    non encore supporté (serial/ble = phases futures), ou node injoignable."""
+    """Fabrique le sink selon `transport` (tcp/ble ; serial à venir). Repli en
+    FakeSink si dry-run, transport inconnu, ou node injoignable."""
     if as_bool(cfg.get("dry_run"), False):
         return FakeSink(cfg.get("dry_run_log"))
     transport = str(cfg.get("transport", "tcp")).strip().lower()
-    if transport != "tcp":
-        # `serial`/`ble` : point d'extension futur (même interface MeshtasticSink).
-        log.warning("transport '%s' non supporté (phase future) → dry-run", transport)
+    warmup = float(cfg.get("connect_warmup", 3))
+    builders = {
+        "tcp": lambda: TcpSink(cfg["host"], interface_factory, warmup),
+        "ble": lambda: BleSink(cfg["ble_address"], interface_factory, warmup),
+    }
+    build = builders.get(transport)
+    if build is None:
+        log.warning("transport '%s' non supporté (serial à venir) → dry-run", transport)
         return FakeSink(cfg.get("dry_run_log"))
     try:
-        return TcpSink(
-            cfg["host"],
-            interface_factory=interface_factory,
-            warmup=float(cfg.get("connect_warmup", 3)),
-        )
-    except Exception as exc:  # lib absente, connexion impossible…
+        return build()
+    except Exception as exc:  # lib absente, adresse manquante, injoignable…
         log.error("Meshtastic injoignable (%s) → dry-run", exc)
         return FakeSink(cfg.get("dry_run_log"))
 

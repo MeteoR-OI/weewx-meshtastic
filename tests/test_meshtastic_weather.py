@@ -166,16 +166,24 @@ def test_tcpsink_text_dm_close():
 
 
 def test_make_sink_branches():
-    assert isinstance(mw.make_sink({"dry_run": "true"}), mw.FakeSink)
-    assert isinstance(mw.make_sink({"transport": "ble"}), mw.FakeSink)  # phase future
-    ok = mw.make_sink({"transport": "tcp", "host": "h"},
-                      interface_factory=lambda host: fake_iface())
-    assert isinstance(ok, mw.TcpSink)
-
-    def boom(host):
+    def boom(x):
         raise OSError("unreachable")
 
+    # dry-run et transport inconnu -> FakeSink
+    assert isinstance(mw.make_sink({"dry_run": "true"}), mw.FakeSink)
+    assert isinstance(mw.make_sink({"transport": "serial"}), mw.FakeSink)  # à venir
+    # tcp : OK et injoignable
+    assert isinstance(
+        mw.make_sink({"transport": "tcp", "host": "h"},
+                     interface_factory=lambda x: fake_iface()), mw.TcpSink)
     assert isinstance(mw.make_sink({"host": "h"}, interface_factory=boom), mw.FakeSink)
+    # ble : OK et injoignable
+    assert isinstance(
+        mw.make_sink({"transport": "ble", "ble_address": "AA:BB"},
+                     interface_factory=lambda x: fake_iface()), mw.BleSink)
+    assert isinstance(
+        mw.make_sink({"transport": "ble", "ble_address": "AA:BB"},
+                     interface_factory=boom), mw.FakeSink)
 
 
 def test_subscribe():

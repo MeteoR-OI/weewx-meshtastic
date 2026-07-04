@@ -132,10 +132,23 @@ Lien/QR      : https://meshtastic.org/e/#CgUS…   (exemple)
 
 ## Transports
 
-`tcp` (WiFi) est supporté aujourd'hui. `serial` (USB) et **`ble`** (Bluetooth, pour
-les nodes BT-only comme le Heltec T114, via le BT d'un Raspberry Pi ou un dongle)
-sont prévus : ils partagent l'interface `MeshtasticSink`, il suffira d'ajouter la
-classe correspondante — aucune refonte.
+Réglés par `transport` :
+
+- **`tcp`** (WiFi) — défaut ; `host` = hôte/IP du node.
+- **`ble`** (Bluetooth LE) — pour les **nodes BT-only** ; `ble_address` = MAC/nom/UUID BLE.
+- `serial` (USB) — à venir.
+
+```ini
+[MeshtasticWeather]
+    transport = ble
+    ble_address = XX:XX:XX:XX:XX:XX   # MAC (Linux) ou nom/UUID (macOS)
+```
+
+> **BLE & Docker** : `ble` requiert `bleak` (installé avec `meshtastic`) et un **Bluetooth
+> accessible NATIVEMENT**. **Docker Desktop sur macOS n'a pas accès au BT de l'hôte** → utilise
+> le transport `ble` en lançant WeeWX **directement** sur une machine BT (Raspberry Pi, Mac…),
+> ou en Docker **sur un hôte Linux** avec passthrough BlueZ/D-Bus (`--net=host`, `/var/run/dbus`).
+> Le transport `tcp` (WiFi) reste le plus simple si le node a du WiFi.
 
 ## Développement & tests
 
