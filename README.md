@@ -30,20 +30,19 @@ Implémentée en une `StdService` WeeWX. Cible : **WeeWX 4/5** (Python 3).
                 │  API Meshtastic — TCP/WiFi (défaut) OU BLE (BT-only)
                 │  ↓ à chaque ARCHIVE : télémétrie EnvironmentMetrics
                 │       + [option] résumé texte  "PAM290 — 22°C · …"
-                │  ↑ DM reçu    ↓ réponse    (le node relaie, il ne calcule rien)
+                │  ↑ DM reçu   ↓ réponse   (le node relaie, ne calcule rien)
                 ▼
-   ┌──────────────────────────────────────────────────┐
-   │ Node Meshtastic « station météo » du maillage    │
-   │  (n'importe quel modèle : WiFi/TCP ou BLE)       │
-   │  RELAIS seulement — ne traite aucune commande    │
-   └────────────┬─────────────────────────────────────┘
+   ┌──────────────────────────────────────────────────┐                        ┌──────────────────────┐
+   │ Node Meshtastic « station météo »                │◀─── DM « météo ? » ────│ node d'un utilisateur│
+   │  du maillage (WiFi/TCP ou BLE)                   │─── réponse du bot ────▶│ (appli Meshtastic)   │
+   │  RELAIS seul — ne traite rien                    │                        │ qui interroge le bot │
+   └────────────┬─────────────────────────────────────┘                        └──────────────────────┘
                 │  LoRa (radio maillée — fréquence gérée par le node : 868/915/433…)
-      ┌─────────┴───────┬──────────────────┬───────────────────┐
-      ▼                 ▼                  ▼                   ▼
-      autres            node d'un          node-passerelle     meshforge
-      nodes             utilisateur qui    MQTT ── MQTT ──▶    (carte + calque
-      (voient la        envoie un DM                            météo — phase 2)
-       télémétrie)      « météo ? »
+      ┌─────────┴─────────┬──────────────────────┐
+      ▼                   ▼                      ▼
+      autres nodes        node-passerelle        meshforge
+      (voient la          MQTT ── MQTT ──▶       (carte + calque
+       télémétrie)                                météo — phase 2)
 ```
 
 - **Télémétrie** (structurée, par station) : le cœur du dispositif — à chaque ARCHIVE par défaut.
