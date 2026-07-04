@@ -22,9 +22,9 @@ Implémentée en une `StdService` WeeWX. Cible : **WeeWX 4/5** (Python 3).
                 │  câble/USB — trames LOOP puis ARCHIVE (ex. toutes les 5 min)
                 ▼
    ┌─────────────────────────────────────┐
-   │ WeeWX   (PC / Raspberry Pi)          │
-   │   ├─ pilote la station               │
-   │   └─ extension  weewx-meshtastic     │   ← ce dépôt (StdService)
+   │ WeeWX   (PC / Raspberry Pi)         │
+   │   ├─ pilote la station              │
+   │   └─ extension  weewx-meshtastic    │   ← ce dépôt (StdService)
    └───────────────┬─────────────────────┘
                    │  API Meshtastic — TCP/WiFi (défaut) OU BLE (nodes BT-only)
                    │  à chaque ARCHIVE (cadence configurable) :
@@ -32,9 +32,9 @@ Implémentée en une `StdService` WeeWX. Cible : **WeeWX 4/5** (Python 3).
                    │    • [option] résumé texte  "PAM290 — 22°C · … · pluie1h/24h"
                    ▼
    ┌─────────────────────────────────────┐        DM: "météo / vent / pluie / …"
-   │ Node Meshtastic (n'importe quel      │◀───────────────────────────────┐
-   │  modèle : WiFi/TCP ou Bluetooth LE)  │────────────────────────────────┘  réponse (bot)
-   │  = « station météo » du maillage     │
+   │ Node Meshtastic (n'importe quel     │◀───────────────────────────────┐
+   │  modèle : WiFi/TCP ou Bluetooth LE) │────────────────────────────────┘  réponse (bot)
+   │  = « station météo » du maillage    │
    └───────────────┬─────────────────────┘
                    │  LoRa  (radio maillée — fréquence/région gérée par le node : 868, 915, 433…)
       ┌────────────┼───────────────────────────────┐
