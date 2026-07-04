@@ -40,9 +40,9 @@ if ! grep -q '^\[MeshtasticWeather\]' "$CONF"; then
     transport = tcp
     host = ${NODE_HOST}
     channel_index = ${CHANNEL_INDEX}
-    station_name = "Sim Docker"
-    send_telemetry = true
-    send_text = true
+    station_id = ${STATION_ID:-SIMDOCK}
+    telemetry_interval = ${TELEMETRY_INTERVAL:-1}
+    text_interval = ${TEXT_INTERVAL:-1}
     dm_enabled = ${DM_ENABLED:-false}
     dry_run = false
 EOF

@@ -21,12 +21,12 @@ class MeshtasticWeatherInstaller(ExtensionInstaller):
             config={
                 "MeshtasticWeather": {
                     "transport": "tcp",
-                    "host": "192.168.1.20",
+                    "host": "meshtastic.local",
                     "connect_warmup": "3",
                     "channel_index": "2",
-                    "station_name": "Ma station",
-                    "send_telemetry": "true",
-                    "send_text": "true",
+                    "station_id": "STATION1",
+                    "telemetry_interval": "1",
+                    "text_interval": "0",
                     "dm_enabled": "false",
                     "dry_run": "false",
                 }

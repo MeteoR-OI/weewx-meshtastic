@@ -30,7 +30,7 @@ def norm(**over):
     base = {
         "time": 1000, "temp_c": 20.0, "humidity": 55.0, "pressure_hpa": 1015.0,
         "wind_ms": 4.47, "wind_dir": 90.0, "gust_ms": 6.7,
-        "rain_rate_mmh": 2.5, "rain_day_mm": 5.0,
+        "rain_1h": 1.2, "rain_24h": 8.4,
     }
     base.update(over)
     return base
@@ -63,7 +63,7 @@ def test_normalize_us_and_metric():
     n = mw.normalize(US_RECORD)
     assert n["temp_c"] == pytest.approx(20.0)
     assert n["wind_ms"] == pytest.approx(4.4704)
-    assert n["rain_rate_mmh"] == pytest.approx(2.54)
+    assert n["rain_1h"] is None and n["rain_24h"] is None  # renseignés par le service
     empty = mw.normalize({"usUnits": weewx.US, "dateTime": None})
     assert empty["time"] == 0
     assert empty["temp_c"] is None
@@ -79,7 +79,9 @@ def test_cardinal():
 
 
 def test_format_summary_variants():
-    assert "20.0°C" in mw.format_summary(norm())
+    s = mw.format_summary(norm())
+    assert "20.0°C" in s
+    assert "pluie1h 1.2mm" in s and "pluie24h 8.4mm" in s
     # vent sans direction -> "vent Xkm/h" sans cardinal
     wind_only = {k: None for k in norm()}
     wind_only["wind_ms"] = 4.4704
@@ -110,8 +112,8 @@ def test_reply_all_branches():
     # vent sans rafale ni direction -> "?" et pas de rafale
     r = mw.reply("wind", norm(gust_ms=None, wind_dir=None))
     assert "?" in r and "raf." not in r
-    assert "cumul jour" in mw.reply("rain", norm())
-    assert mw.reply("rain", norm(rain_rate_mmh=None, rain_day_mm=None)) == "Pluie : —"
+    assert mw.reply("rain", norm()) == "Pluie : 1h 1.2 mm · 24h 8.4 mm"
+    assert mw.reply("rain", norm(rain_1h=None, rain_24h=None)) == "Pluie : 1h — · 24h —"
     assert "%HR" in mw.reply("temp", norm())
     assert mw.reply("temp", norm(temp_c=None, humidity=None)) == "Température : —"
     assert mw.reply("zzz", norm()) == mw._help_text()
@@ -197,15 +199,42 @@ def test_init():
     svc = make_service()
     assert svc.sink is None
     assert svc.dm_enabled is False  # défaut opt-out
+    assert svc.telemetry_interval == 1  # défaut : chaque archive
+    assert svc.text_interval == 0  # défaut : texte désactivé
     svc2 = make_service({"dm_enabled": "true"}, sink=mw.FakeSink())
     assert isinstance(svc2.sink, mw.FakeSink)
     assert svc2.dm_enabled is True
 
 
+def test_due():
+    svc = make_service()
+    svc._n = 1
+    assert svc._due(1) is True
+    assert svc._due(2) is False
+    assert svc._due(0) is False  # désactivé
+    svc._n = 4
+    assert svc._due(2) is True
+
+
+def test_rain_totals_from_db():
+    svc = make_service()
+    svc.latest = norm(time=100000)
+    dbm = mock.Mock()
+    dbm.std_unit_system = weewx.METRICWX  # pluie en mm
+    dbm.table_name = "archive"
+    dbm.getSql.return_value = [3.0]  # SUM(rain)
+    svc.engine.db_binder.get_manager.return_value = dbm
+    assert svc._rain_totals() == (pytest.approx(3.0), pytest.approx(3.0))
+    dbm.getSql.return_value = [None]  # pas de données
+    assert svc._rain_totals() == (None, None)
+    svc.engine.db_binder.get_manager.side_effect = RuntimeError("no db")  # pas de base
+    assert svc._rain_totals() == (None, None)
+
+
 def test_new_archive_record_dm_off_open_send_close():
-    # Sans DM : ouvrir (make_sink) / envoyer / FERMER -> pas de connexion oisive.
+    # Télémétrie + texte -> ouvrir / envoyer / FERMER (pas de connexion oisive).
     fresh = mock.Mock()
-    svc = make_service({"dm_enabled": "false"})
+    svc = make_service({"text_interval": "1", "dm_enabled": "false"})
     with mock.patch.object(mw, "make_sink", return_value=fresh):
         svc.new_archive_record(mock.Mock(record=US_RECORD))
     fresh.send_env.assert_called_once()
@@ -227,13 +256,36 @@ def test_new_archive_record_dm_on_keeps_open_and_subscribes():
     sub.assert_called_once()
 
 
-def test_new_archive_record_toggles_off():
+def test_new_archive_record_text_interval():
+    # télémétrie off, texte toutes les 2 archives : rien à la 1re, texte à la 2e.
     fresh = mock.Mock()
-    svc = make_service({"send_telemetry": "false", "send_text": "false", "dm_enabled": "false"})
-    with mock.patch.object(mw, "make_sink", return_value=fresh):
+    svc = make_service({"telemetry_interval": "0", "text_interval": "2", "dm_enabled": "false"})
+    with mock.patch.object(mw, "make_sink", return_value=fresh) as ms:
+        svc.new_archive_record(mock.Mock(record=US_RECORD))  # n=1 -> rien
+        ms.assert_not_called()
+        svc.new_archive_record(mock.Mock(record=US_RECORD))  # n=2 -> texte
+    fresh.send_text.assert_called_once()
+    fresh.send_env.assert_not_called()
+
+
+def test_new_archive_record_nothing_to_send():
+    svc = make_service({"telemetry_interval": "0", "text_interval": "0", "dm_enabled": "false"})
+    with mock.patch.object(mw, "make_sink") as ms:
+        svc.new_archive_record(mock.Mock(record=US_RECORD))
+        ms.assert_not_called()  # aucun paquet -> pas de connexion
+
+
+def test_new_archive_record_dm_on_nothing_due_still_listens():
+    # DM actif mais rien à émettre : on rouvre pour écouter, sans envoyer.
+    fresh = mock.Mock(spec=["send_env", "send_text", "send_dm", "close", "my_num"])
+    svc = make_service({"telemetry_interval": "0", "text_interval": "0", "dm_enabled": "true"})
+    with mock.patch.object(mw, "make_sink", return_value=fresh), \
+         mock.patch.object(mw, "_subscribe") as sub:
         svc.new_archive_record(mock.Mock(record=US_RECORD))
     fresh.send_env.assert_not_called()
     fresh.send_text.assert_not_called()
+    fresh.close.assert_not_called()
+    sub.assert_called_once()
 
 
 def test_new_archive_record_send_error_is_logged():
@@ -395,7 +447,7 @@ def test_print_qr_with_and_without_lib():
 def test_main_setup_channel(capsys):
     ret = (2, "QUJD", "https://meshtastic.org/e/#abc")
     with mock.patch.object(mw, "setup_channel", return_value=ret):
-        rc = mw.main(["setup-channel", "--host", "192.168.1.20", "--name", "meteo"])
+        rc = mw.main(["setup-channel", "--host", "node.local", "--name", "meteo"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "index=2" in out and "meshtastic.org/e/#abc" in out

@@ -31,15 +31,19 @@ Puis dans `weewx.conf` :
 ```ini
 [MeshtasticWeather]
     transport = tcp            # tcp (défaut) | serial | ble (serial/ble = à venir)
-    host = 192.168.1.20        # IP du node (API TCP port 4403) — si transport=tcp
+    host = meshtastic.local    # hôte/IP du node (API TCP port 4403) — À ADAPTER
     connect_warmup = 3         # s d'attente après connexion avant d'émettre (voir « Robustesse »)
     channel_index = 2          # index du canal dédié (voir « Canal dédié »)
-    station_name = "Ma station"
-    send_telemetry = true
-    send_text = true
+    station_id = STATION1      # identifiant station, préfixe du message (le canal est partagé)
+    telemetry_interval = 1     # télémétrie toutes les N archives (1 = chaque ; 0 = jamais)
+    text_interval = 0          # message texte toutes les M archives (0 = jamais ; ex. 6)
     dm_enabled = false         # true = bot DM (garde la connexion ouverte, cf. « Robustesse »)
     dry_run = false            # true = logue au lieu d'émettre (tests hors-ligne)
 ```
+
+> Valeurs à **adapter** (`host`, `channel_index`, `station_id`). Le **canal meteo est
+> partagé** entre plusieurs stations/modules : garde `text_interval` bas ou nul et laisse la
+> **télémétrie** (structurée, par station) faire l'essentiel.
 
 Le service est ajouté automatiquement à `[Engine][[Services]] archive_services`.
 
@@ -49,7 +53,7 @@ Le service est ajouté automatiquement à `[Engine][[Services]] archive_services
 slot libre ; le node redémarre ensuite) :
 
 ```bash
-python -m meshtastic_weather setup-channel --host 192.168.1.20 --name meteo
+python -m meshtastic_weather setup-channel --host <hôte-ou-ip-du-node> --name meteo
 ```
 
 Affiche l'**index** (à reporter dans `channel_index`), la **PSK** (à partager avec meshforge),
@@ -58,8 +62,8 @@ d'un scan sur d'autres appareils :
 
 ```
 Canal 'meteo' créé : index=3
-PSK (base64) : t1BkNc7f…
-Lien/QR      : https://meshtastic.org/e/#CikSIL…
+PSK (base64) : AbCdEf0123…            (exemple)
+Lien/QR      : https://meshtastic.org/e/#CgUS…   (exemple)
 █▀▀▀▀▀▀▀██▀▀█▀▀▀███▀████…   ← QR ASCII (nécessite `pip install qrcode`)
 → mettre channel_index = 3 dans [MeshtasticWeather].
 ```
@@ -110,12 +114,15 @@ docker compose -f test/docker-compose.test.yml up --build \
 ### Test « live » : WeeWX Simulator → vrai node
 
 Fait tourner WeeWX (driver Simulator, archive 60 s) + l'extension dans un conteneur, en
-poussant vers un **vrai** node Meshtastic sur le LAN (par défaut `192.168.1.20`) :
+poussant vers un **vrai** node Meshtastic sur le LAN. Renseigne **tes** valeurs via `-e` :
 
 ```bash
 docker build -t weewx-meshtastic-live -f test/live/Dockerfile .
-docker run --rm -e NODE_HOST=192.168.1.20 -e CHANNEL_INDEX=3 weewx-meshtastic-live
-# logs attendus : « prêt (sink=TcpSink) » puis « archive envoyée (TcpSink, canal 3) »
+docker run --rm \
+    -e NODE_HOST=<ip-de-ton-node> -e CHANNEL_INDEX=<index-du-canal> \
+    -e STATION_ID=<ton-id> -e TEXT_INTERVAL=1 -e DM_ENABLED=true \
+    weewx-meshtastic-live
+# logs attendus : « prêt (...) » puis « archive envoyée (TcpSink, canal N) »
 ```
 
 La **CI** rejoue : lint, tests unitaires (matrice Python 3.9–3.12, WeeWX 5) avec

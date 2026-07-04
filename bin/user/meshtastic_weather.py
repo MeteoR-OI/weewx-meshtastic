@@ -34,8 +34,6 @@ _TARGET = {
     "barometer": "mbar",
     "windSpeed": "meter_per_second",
     "windGust": "meter_per_second",
-    "rainRate": "mm_per_hour",
-    "dayRain": "mm",
 }
 _CARDINALS = [
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -80,8 +78,9 @@ def normalize(record):
         "wind_ms": _conv(record, "windSpeed"),
         "wind_dir": _num(record.get("windDir")),
         "gust_ms": _conv(record, "windGust"),
-        "rain_rate_mmh": _conv(record, "rainRate"),
-        "rain_day_mm": _conv(record, "dayRain"),
+        # Cumuls de pluie : renseignés par le service (nécessitent l'historique DB).
+        "rain_1h": None,
+        "rain_24h": None,
     }
 
 
@@ -105,8 +104,10 @@ def format_summary(n, station=""):
         card = cardinal(n["wind_dir"])
         suffix = " " + card if card else ""
         parts.append("vent {:.0f}km/h{}".format(n["wind_ms"] * 3.6, suffix))
-    if n["rain_rate_mmh"] is not None:
-        parts.append("pluie {:.1f}mm/h".format(n["rain_rate_mmh"]))
+    if n["rain_1h"] is not None:
+        parts.append(f"pluie1h {n['rain_1h']:.1f}mm")
+    if n["rain_24h"] is not None:
+        parts.append(f"pluie24h {n['rain_24h']:.1f}mm")
     body = " · ".join(parts) if parts else "pas de données"
     head = station + " — " if station else ""
     return (head + body)[:MAX_TEXT]
@@ -145,9 +146,9 @@ def reply(cmd, n, station=""):
         gust = "" if n["gust_ms"] is None else " (raf. {:.0f})".format(n["gust_ms"] * 3.6)
         return "Vent : {:.0f} km/h {}{}".format(n["wind_ms"] * 3.6, card or "?", gust)
     if cmd == "rain":
-        rate = "—" if n["rain_rate_mmh"] is None else "{:.1f} mm/h".format(n["rain_rate_mmh"])
-        day = "" if n["rain_day_mm"] is None else " · cumul jour {:.1f} mm".format(n["rain_day_mm"])
-        return f"Pluie : {rate}{day}"
+        h1 = "—" if n["rain_1h"] is None else f"{n['rain_1h']:.1f} mm"
+        h24 = "—" if n["rain_24h"] is None else f"{n['rain_24h']:.1f} mm"
+        return f"Pluie : 1h {h1} · 24h {h24}"
     if cmd == "temp":
         temp = "—" if n["temp_c"] is None else "{:.1f}°C".format(n["temp_c"])
         hum = "" if n["humidity"] is None else " · {:.0f}%HR".format(n["humidity"])
@@ -287,32 +288,74 @@ class MeshtasticWeather(StdService):
         super().__init__(engine, config_dict)
         cfg = dict(config_dict.get("MeshtasticWeather", {}))
         self._cfg = cfg
-        self.station = cfg.get("station_name", "")
+        self.station_id = cfg.get("station_id", "")
         self.channel_index = int(cfg.get("channel_index", 0))
-        self.send_telemetry = as_bool(cfg.get("send_telemetry"), True)
-        self.send_text = as_bool(cfg.get("send_text"), True)
+        # Cadences en nb d'ARCHIVES : télémétrie toutes les N (défaut 1 = chaque
+        # archive ; 0 = jamais) ; texte toutes les M (défaut 0 = jamais, car le
+        # canal meteo est partagé entre plusieurs stations).
+        self.telemetry_interval = int(cfg.get("telemetry_interval", 1))
+        self.text_interval = int(cfg.get("text_interval", 0))
         self.dm_enabled = as_bool(cfg.get("dm_enabled"), False)
         self.latest = None
-        # AUCUNE connexion au démarrage : une connexion oisive meurt et sa reliquat
+        self._n = 0  # compteur d'archives
+        # AUCUNE connexion au démarrage : une connexion oisive meurt et son reliquat
         # côté node fait échouer (broken pipe) la reconnexion suivante. On ouvre
-        # donc au moment d'émettre (1re archive), cf. new_archive_record/_reconnect.
+        # donc au moment d'émettre (cf. new_archive_record/_reconnect).
         self.sink = sink
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
-        log.info("MeshtasticWeather %s prêt (dm=%s)", VERSION, self.dm_enabled)
+        log.info(
+            "MeshtasticWeather %s prêt (télémétrie/%s archives, texte/%s, dm=%s)",
+            VERSION, self.telemetry_interval, self.text_interval, self.dm_enabled,
+        )
+
+    def _due(self, interval):
+        return interval > 0 and self._n % interval == 0
+
+    def _rain_totals(self):
+        """Cumuls de pluie 1 h / 24 h (mm) depuis la base WeeWX ; (None, None) si
+        indisponible (pas de base d'historique)."""
+        try:
+            dbm = self.engine.db_binder.get_manager()
+            now = int(self.latest["time"])
+            unit = weewx.units.getStandardUnitType(dbm.std_unit_system, "rain")
+
+            def mm(seconds):
+                row = dbm.getSql(
+                    f"SELECT SUM(rain) FROM {dbm.table_name} "
+                    "WHERE dateTime > ? AND dateTime <= ?",
+                    (now - seconds, now),
+                )
+                raw = row[0] if row and row[0] is not None else None
+                if raw is None:
+                    return None
+                return weewx.units.convert(weewx.units.ValueTuple(raw, *unit), "mm")[0]
+
+            return mm(3600), mm(86400)
+        except Exception as exc:
+            log.debug("cumuls pluie indisponibles : %s", exc)
+            return None, None
 
     def new_archive_record(self, event):
-        n = normalize(event.record)
-        self.latest = n
+        self._n += 1
+        self.latest = normalize(event.record)
+        send_tel = self._due(self.telemetry_interval)
+        send_txt = self._due(self.text_interval)
+        # Rien à émettre cette archive (et pas de bot DM à alimenter) -> pas de paquet.
+        if not (send_tel or send_txt or self.dm_enabled):
+            return
+        self.latest["rain_1h"], self.latest["rain_24h"] = self._rain_totals()
         # Connexion FRAÎCHE à chaque archive : le node ferme les connexions TCP
-        # inactives (quelques dizaines de secondes) entre deux envois (5 min en
-        # prod) — une connexion persistante serait morte au moment d'émettre.
+        # inactives entre deux envois — une connexion persistante serait morte.
         self._reconnect()
         try:
-            if self.send_telemetry:
-                self.sink.send_env(n)
-            if self.send_text:
-                self.sink.send_text(format_summary(n, self.station), self.channel_index)
-            log.info("archive envoyée (%s, canal %s)", type(self.sink).__name__, self.channel_index)
+            if send_tel:
+                self.sink.send_env(self.latest)
+            if send_txt:
+                text = format_summary(self.latest, self.station_id)
+                self.sink.send_text(text, self.channel_index)
+            if send_tel or send_txt:
+                log.info("archive envoyée (%s, canal %s)",
+                         type(self.sink).__name__, self.channel_index)
         except Exception as exc:
             log.error("envoi échoué : %s", exc)
         finally:
@@ -343,7 +386,7 @@ class MeshtasticWeather(StdService):
             decoded = packet.get("decoded") or {}
             if decoded.get("portnum") != "TEXT_MESSAGE_APP":
                 return
-            answer = reply(command(decoded.get("text", "")), self.latest, self.station)
+            answer = reply(command(decoded.get("text", "")), self.latest, self.station_id)
             self.sink.send_dm(answer, packet.get("from"))
         except Exception as exc:
             log.error("DM ignoré : %s", exc)

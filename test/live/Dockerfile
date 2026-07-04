@@ -1,11 +1,10 @@
 # Test LIVE : WeeWX + driver Simulator + notre extension, poussant vers un VRAI
-# node Meshtastic (par défaut 192.168.1.20). Génère de fausses données météo et
-# les envoie toutes les 60 s. À NE PAS confondre avec l'intégration CI (node
-# simulé) : ici on vise du matériel réel sur le LAN.
+# node Meshtastic sur le LAN. Génère de fausses données météo et les envoie toutes
+# les 60 s. À NE PAS confondre avec l'intégration CI (node simulé).
+# Renseigne TES valeurs via -e (NODE_HOST, CHANNEL_INDEX, STATION_ID, ...).
 #
 #   docker build -t weewx-meshtastic-live -f test/live/Dockerfile .
-#   docker run --rm --name wm-live weewx-meshtastic-live         # défaut 192.168.1.20
-#   docker run --rm -e NODE_HOST=192.168.1.30 weewx-meshtastic-live
+#   docker run --rm -e NODE_HOST=<ip-node> -e CHANNEL_INDEX=<idx> weewx-meshtastic-live
 FROM python:3.12-slim
 
 RUN pip install --no-cache-dir weewx meshtastic
@@ -32,6 +31,6 @@ RUN sed -i \
 COPY test/live/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV NODE_HOST=192.168.1.20
+ENV NODE_HOST=meshtastic.local
 ENV CHANNEL_INDEX=0
 ENTRYPOINT ["/entrypoint.sh"]
