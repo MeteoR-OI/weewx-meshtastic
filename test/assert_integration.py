@@ -55,7 +55,7 @@ def main():
     print(f"OK: télémétrie + texte acceptés par le node (my_num={sink.my_num})")
 
     # 2) Création d'un canal dédié + vérification côté node.
-    index, _psk = mw.setup_channel(HOST, "meteo")
+    index, _psk, _url = mw.setup_channel(HOST, "meteo")
     assert isinstance(index, int) and index >= 1, "index de canal invalide"
     time.sleep(3)
     wait_for_port(HOST, PORT)
