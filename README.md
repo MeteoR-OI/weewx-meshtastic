@@ -26,14 +26,14 @@ Implémentée en une `StdService` WeeWX. Cible : **WeeWX 4/5** (Python 3).
    │   ├─ pilote la station               │
    │   └─ extension  weewx-meshtastic     │   ← ce dépôt (StdService)
    └───────────────┬─────────────────────┘
-                   │  TCP / WiFi — API Meshtastic (port 4403)
+                   │  API Meshtastic — TCP/WiFi (défaut) OU BLE (nodes BT-only)
                    │  à chaque ARCHIVE (cadence configurable) :
                    │    • télémétrie EnvironmentMetrics  (temp · hum · press · vent)
                    │    • [option] résumé texte  "PAM290 — 22°C · … · pluie1h/24h"
                    ▼
    ┌─────────────────────────────────────┐        DM: "météo / vent / pluie / …"
    │ Node Meshtastic (n'importe quel      │◀───────────────────────────────┐
-   │  modèle joignable en WiFi/TCP)       │────────────────────────────────┘  réponse (bot)
+   │  modèle : WiFi/TCP ou Bluetooth LE)  │────────────────────────────────┘  réponse (bot)
    │  = « station météo » du maillage     │
    └───────────────┬─────────────────────┘
                    │  LoRa  (radio maillée — fréquence/région gérée par le node : 868, 915, 433…)
@@ -67,8 +67,8 @@ Puis dans `weewx.conf` :
 
 ```ini
 [MeshtasticWeather]
-    transport = tcp            # tcp (défaut) | serial | ble (serial/ble = à venir)
-    host = meshtastic.local    # hôte/IP du node (API TCP port 4403) — À ADAPTER
+    transport = tcp            # tcp (défaut, WiFi) | ble (BT-only) | serial (à venir)
+    host = meshtastic.local    # hôte/IP du node (API TCP port 4403) — À ADAPTER (si tcp)
     connect_warmup = 3         # s d'attente après connexion avant d'émettre (voir « Robustesse »)
     channel_index = 2          # index du canal dédié (voir « Canal dédié »)
     station_id = STATION1      # identifiant station, préfixe du message (le canal est partagé)
@@ -106,13 +106,16 @@ Lien/QR      : https://meshtastic.org/e/#CgUS…   (exemple)
 → mettre channel_index = 3 dans [MeshtasticWeather].
 ```
 
+> `setup-channel` passe par **TCP**. Pour un node **BLE-only**, crée le canal via l'app
+> Meshtastic (ou importe le lien/QR ci-dessus), puis renseigne son `channel_index`.
+
 ## Commandes DM
 
 | Message | Réponse |
 |---------|---------|
 | `météo` / `now` | résumé complet |
 | `vent` | vitesse + rafale + direction |
-| `pluie` | taux + cumul du jour |
+| `pluie` | cumuls 1 h et 24 h |
 | `temp` | température + humidité |
 | `aide` | liste des commandes |
 
@@ -175,7 +178,7 @@ docker run --rm \
     -e NODE_HOST=<ip-de-ton-node> -e CHANNEL_INDEX=<index-du-canal> \
     -e STATION_ID=<ton-id> -e TEXT_INTERVAL=1 -e DM_ENABLED=true \
     weewx-meshtastic-live
-# logs attendus : « prêt (...) » puis « archive envoyée (TcpSink, canal N) »
+# logs : « prêt (…) » puis « archive #N → télémétrie [+ texte] envoyé (TcpSink, canal N) »
 ```
 
 La **CI** rejoue : lint, tests unitaires (matrice Python 3.9–3.12, WeeWX 5) avec
