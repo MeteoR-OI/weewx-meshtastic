@@ -81,8 +81,12 @@ docker compose -f test/docker-compose.test.yml up --build \
     --abort-on-container-exit --exit-code-from tester
 ```
 
-La **CI** rejoue : lint, tests unitaires (matrice Python 3.9–3.12 + WeeWX 4/5) avec
+La **CI** rejoue : lint, tests unitaires (matrice Python 3.9–3.12, WeeWX 5) avec
 **gate de couverture 100 %**, et l'intégration Docker contre `meshtasticd -s`.
+
+> WeeWX n'est publié sur PyPI qu'à partir de la 5.0 ; les tests tournent donc
+> contre WeeWX 5. La compat **WeeWX 4** repose sur les API stables utilisées
+> (`StdService`, `ExtensionInstaller`, `weewx.units`), inchangées entre 4 et 5.
 
 ## Licence
 

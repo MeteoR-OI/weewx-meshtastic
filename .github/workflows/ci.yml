@@ -16,23 +16,21 @@ jobs:
       - run: ruff check .
 
   unit:
-    # Tests unitaires + gate de couverture 100% (statements ET branches).
-    # Matrice Python 3.9–3.12 ; une jambe pinne WeeWX 4 (compat 4/5).
+    # Tests unitaires + gate de couverture 100% (statements ET branches),
+    # matrice Python 3.9–3.12. WeeWX n'est publié sur PyPI qu'à partir de la 5.0
+    # (la 4.x n'y est pas) ; on teste donc contre WeeWX 5. La compat WeeWX 4 tient
+    # aux API stables utilisées (StdService, ExtensionInstaller, weewx.units).
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
-        weewx: ["weewx"]
-        include:
-          - python-version: "3.9"
-            weewx: "weewx==4.10.2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install pytest pytest-cov meshtastic "${{ matrix.weewx }}"
+      - run: pip install pytest pytest-cov meshtastic weewx
       - run: pytest   # addopts (pyproject) impose --cov-branch --cov-fail-under=100
 
   integration:
