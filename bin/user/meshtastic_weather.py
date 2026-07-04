@@ -280,6 +280,12 @@ def _subscribe(callback):
     pub.subscribe(callback, "meshtastic.receive.text")
 
 
+def _quiet_lib_logs():
+    """Tait le bruit de la lib meshtastic (mort des connexions oisives / broken
+    pipe) que NOUS gérons déjà par reconnexion — nos propres logs suffisent."""
+    logging.getLogger("meshtastic").setLevel(logging.CRITICAL)
+
+
 # --------------------------------------------------------------------------- #
 # Service WeeWX
 # --------------------------------------------------------------------------- #
@@ -296,6 +302,8 @@ class MeshtasticWeather(StdService):
         self.telemetry_interval = int(cfg.get("telemetry_interval", 1))
         self.text_interval = int(cfg.get("text_interval", 0))
         self.dm_enabled = as_bool(cfg.get("dm_enabled"), False)
+        if as_bool(cfg.get("quiet_lib_logs"), True):
+            _quiet_lib_logs()
         self.latest = None
         self._n = 0  # compteur d'archives
         # AUCUNE connexion au démarrage : une connexion oisive meurt et son reliquat
@@ -348,13 +356,17 @@ class MeshtasticWeather(StdService):
         # inactives entre deux envois — une connexion persistante serait morte.
         self._reconnect()
         try:
+            kinds = []
             if send_tel:
                 self.sink.send_env(self.latest)
+                kinds.append("télémétrie")
             if send_txt:
                 text = format_summary(self.latest, self.station_id)
                 self.sink.send_text(text, self.channel_index)
-            if send_tel or send_txt:
-                log.info("archive envoyée (%s, canal %s)",
+                kinds.append("texte")
+            if kinds:
+                log.info("archive #%s → %s envoyé (%s, canal %s)",
+                         self._n, " + ".join(kinds),
                          type(self.sink).__name__, self.channel_index)
         except Exception as exc:
             log.error("envoi échoué : %s", exc)

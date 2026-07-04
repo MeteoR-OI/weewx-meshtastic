@@ -28,6 +28,7 @@ class MeshtasticWeatherInstaller(ExtensionInstaller):
                     "telemetry_interval": "1",
                     "text_interval": "0",
                     "dm_enabled": "false",
+                    "quiet_lib_logs": "true",
                     "dry_run": "false",
                 }
             },

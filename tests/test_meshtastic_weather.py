@@ -2,6 +2,7 @@
 """Tests unitaires — couverture 100 % (statements + branches). meshtastic/pubsub
 sont réels (pip) mais toute I/O node est injectée/mockée : aucun matériel requis."""
 import base64
+import logging
 from unittest import mock
 
 import meshtastic_weather as mw
@@ -204,6 +205,17 @@ def test_init():
     svc2 = make_service({"dm_enabled": "true"}, sink=mw.FakeSink())
     assert isinstance(svc2.sink, mw.FakeSink)
     assert svc2.dm_enabled is True
+
+
+def test_quiet_lib_logs_and_toggle():
+    logging.getLogger("meshtastic").setLevel(logging.INFO)
+    mw._quiet_lib_logs()
+    assert logging.getLogger("meshtastic").level == logging.CRITICAL
+    with mock.patch.object(mw, "_quiet_lib_logs") as q:
+        make_service()  # défaut : silencieux
+        q.assert_called_once()
+        make_service({"quiet_lib_logs": "false"})  # désactivé
+        q.assert_called_once()  # pas rappelé
 
 
 def test_due():

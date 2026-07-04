@@ -12,8 +12,44 @@ vers un **node Meshtastic** à chaque enregistrement **ARCHIVE**. Elle :
 2. diffuse un **résumé texte** sur un **canal dédié** ;
 3. répond à des **interrogations en message direct (DM)** : `météo`, `vent`, `pluie`, `temp`, `aide`.
 
-Une seule `StdService` détient **une** connexion persistante au node (un seul
-client). Cible : **WeeWX 4/5** (Python 3).
+Implémentée en une `StdService` WeeWX. Cible : **WeeWX 4/5** (Python 3).
+
+## Architecture
+
+```
+        Davis Vantage Pro 2
+        (station météo)
+                │  câble/USB — trames LOOP puis ARCHIVE (ex. toutes les 5 min)
+                ▼
+   ┌─────────────────────────────────────┐
+   │ WeeWX   (PC / Raspberry Pi)          │
+   │   ├─ pilote la station               │
+   │   └─ extension  weewx-meshtastic     │   ← ce dépôt (StdService)
+   └───────────────┬─────────────────────┘
+                   │  TCP / WiFi — API Meshtastic (port 4403)
+                   │  à chaque ARCHIVE (cadence configurable) :
+                   │    • télémétrie EnvironmentMetrics  (temp · hum · press · vent)
+                   │    • [option] résumé texte  "PAM290 — 22°C · … · pluie1h/24h"
+                   ▼
+   ┌─────────────────────────────────────┐        DM: "météo / vent / pluie / …"
+   │ Node Meshtastic (Heltec V3)          │◀───────────────────────────────┐
+   │  = « station météo » du maillage     │────────────────────────────────┘  réponse (bot)
+   └───────────────┬─────────────────────┘
+                   │  LoRa  (radio maillée, 868 MHz)
+      ┌────────────┼───────────────────────────────┐
+      ▼            ▼                                ▼
+  autres       node-passerelle MQTT  ── MQTT ──▶  meshforge
+  nodes        (uplink LoRa → MQTT)               (carte + calque météo — phase 2)
+  (app :
+   télémétrie
+   + canal
+   « meteo »)
+```
+
+- **Télémétrie** (structurée, par station) : le cœur du dispositif — à chaque ARCHIVE par défaut.
+- **Texte** sur le canal partagé `meteo` : optionnel (le canal peut réunir plusieurs stations).
+- **DM** : le node répond aux interrogations (best-effort, cf. « Robustesse »).
+- **Connexion** : ouverte à l'émission puis refermée (le node coupe les connexions oisives).
 
 ## Installation
 
@@ -38,6 +74,7 @@ Puis dans `weewx.conf` :
     telemetry_interval = 1     # télémétrie toutes les N archives (1 = chaque ; 0 = jamais)
     text_interval = 0          # message texte toutes les M archives (0 = jamais ; ex. 6)
     dm_enabled = false         # true = bot DM (garde la connexion ouverte, cf. « Robustesse »)
+    quiet_lib_logs = true      # tait le bruit ERROR de la lib meshtastic (géré par reconnexion)
     dry_run = false            # true = logue au lieu d'émettre (tests hors-ligne)
 ```
 
