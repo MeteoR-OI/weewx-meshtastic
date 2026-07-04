@@ -32,10 +32,11 @@ Implémentée en une `StdService` WeeWX. Cible : **WeeWX 4/5** (Python 3).
                    │    • [option] résumé texte  "PAM290 — 22°C · … · pluie1h/24h"
                    ▼
    ┌─────────────────────────────────────┐        DM: "météo / vent / pluie / …"
-   │ Node Meshtastic (Heltec V3)          │◀───────────────────────────────┐
-   │  = « station météo » du maillage     │────────────────────────────────┘  réponse (bot)
+   │ Node Meshtastic (n'importe quel      │◀───────────────────────────────┐
+   │  modèle joignable en WiFi/TCP)       │────────────────────────────────┘  réponse (bot)
+   │  = « station météo » du maillage     │
    └───────────────┬─────────────────────┘
-                   │  LoRa  (radio maillée, 868 MHz)
+                   │  LoRa  (radio maillée — fréquence/région gérée par le node : 868, 915, 433…)
       ┌────────────┼───────────────────────────────┐
       ▼            ▼                                ▼
   autres       node-passerelle MQTT  ── MQTT ──▶  meshforge
