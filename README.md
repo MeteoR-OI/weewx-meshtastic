@@ -32,6 +32,7 @@ Puis dans `weewx.conf` :
 [MeshtasticWeather]
     transport = tcp            # tcp (défaut) | serial | ble (serial/ble = à venir)
     host = 192.168.1.20        # IP du node (API TCP port 4403) — si transport=tcp
+    connect_warmup = 3         # s d'attente après connexion avant d'émettre (voir « Robustesse »)
     channel_index = 2          # index du canal dédié (voir « Canal dédié »)
     station_name = "Ma station"
     send_telemetry = true
@@ -73,6 +74,11 @@ Lien/QR      : https://meshtastic.org/e/#CikSIL…
 | `temp` | température + humidité |
 | `aide` | liste des commandes |
 
+> **Robustesse / 1er paquet** : le node **perd le premier paquet émis juste après connexion**.
+> Comme on ouvre une connexion fraîche à chaque archive et que la **télémétrie** est le 1er
+> envoi, on attend `connect_warmup` secondes (défaut 3) après connexion avant d'émettre —
+> sinon la télémétrie ne partirait pas. Augmentez cette valeur si un node est plus lent à démarrer.
+>
 > **Robustesse / DM** : le node ferme les connexions TCP **inactives** (quelques dizaines de
 > secondes), ce que la lib meshtastic logue en `ERROR … reader … timed out`. Par défaut
 > (`dm_enabled = false`) l'extension **ouvre / envoie / ferme** à chaque archive : aucune

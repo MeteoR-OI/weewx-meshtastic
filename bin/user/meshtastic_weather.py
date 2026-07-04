@@ -207,10 +207,14 @@ class FakeSink:
 class TcpSink:
     """Sink réel sur un node Meshtastic joignable en TCP (WiFi)."""
 
-    def __init__(self, host, interface_factory=None):
+    def __init__(self, host, interface_factory=None, warmup=3.0):
         factory = interface_factory or _default_tcp_factory
         self._iface = factory(host)
         self.my_num = self._iface.myInfo.my_node_num
+        # Le node PERD le premier paquet émis juste après connexion : on laisse la
+        # liaison se stabiliser avant tout envoi (sinon la télémétrie, 1er envoi
+        # de l'archive, ne partirait pas). Réglable via `connect_warmup`.
+        time.sleep(warmup)
 
     def send_env(self, metrics):
         from meshtastic import BROADCAST_ADDR
@@ -259,7 +263,11 @@ def make_sink(cfg, interface_factory=None):
         log.warning("transport '%s' non supporté (phase future) → dry-run", transport)
         return FakeSink(cfg.get("dry_run_log"))
     try:
-        return TcpSink(cfg["host"], interface_factory=interface_factory)
+        return TcpSink(
+            cfg["host"],
+            interface_factory=interface_factory,
+            warmup=float(cfg.get("connect_warmup", 3)),
+        )
     except Exception as exc:  # lib absente, connexion impossible…
         log.error("Meshtastic injoignable (%s) → dry-run", exc)
         return FakeSink(cfg.get("dry_run_log"))

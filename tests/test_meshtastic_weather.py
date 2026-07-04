@@ -8,9 +8,17 @@ import meshtastic_weather as mw
 import pytest
 import weewx
 
+
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers
 # --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def _no_sleep():
+    # Neutralise les temporisations (warm-up connexion, réessais) pour des tests rapides.
+    with mock.patch.object(mw.time, "sleep"):
+        yield
+
+
 US_RECORD = {
     "usUnits": weewx.US, "dateTime": 1000, "outTemp": 68.0, "outHumidity": 55.0,
     "barometer": 30.0, "windSpeed": 10.0, "windGust": 15.0, "windDir": 90.0,
