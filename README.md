@@ -144,11 +144,13 @@ Réglés par `transport` :
     ble_address = XX:XX:XX:XX:XX:XX   # MAC (Linux) ou nom/UUID (macOS)
 ```
 
-> **BLE & Docker** : `ble` requiert `bleak` (installé avec `meshtastic`) et un **Bluetooth
-> accessible NATIVEMENT**. **Docker Desktop sur macOS n'a pas accès au BT de l'hôte** → utilise
-> le transport `ble` en lançant WeeWX **directement** sur une machine BT (Raspberry Pi, Mac…),
-> ou en Docker **sur un hôte Linux** avec passthrough BlueZ/D-Bus (`--net=host`, `/var/run/dbus`).
-> Le transport `tcp` (WiFi) reste le plus simple si le node a du WiFi.
+> **BLE — appairage & Docker** : `ble` requiert `bleak` (installé avec `meshtastic`) et un
+> **Bluetooth accessible NATIVEMENT**. Au **1er contact**, le node affiche un **PIN** à saisir
+> (appairage/bonding) ; ensuite la connexion est directe. Validé nativement sur macOS (saisir le
+> PIN au prompt) et Linux (`bluetoothctl pair …`). En revanche **Docker Desktop sur macOS n'a pas
+> accès au BT de l'hôte** → pour `ble`, lance WeeWX **directement** sur la machine BT (Raspberry
+> Pi, Mac…), ou en Docker **sur un hôte Linux** avec passthrough BlueZ/D-Bus (`--net=host`,
+> `/var/run/dbus`). Le transport `tcp` (WiFi) reste le plus simple si le node a du WiFi.
 
 ## Développement & tests
 
