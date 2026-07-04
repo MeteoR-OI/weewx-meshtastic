@@ -1,0 +1,9 @@
+# Image de test : exécute assert_integration.py (vrai code du plugin) contre le
+# node Meshtastic simulé. Ne nécessite pas WeeWX (le sink/protocole seuls).
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install --no-cache-dir meshtastic weewx
+COPY bin/ bin/
+COPY test/ test/
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "test/assert_integration.py"]

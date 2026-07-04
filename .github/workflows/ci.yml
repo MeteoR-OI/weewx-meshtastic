@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  unit:
+    # Tests unitaires + gate de couverture 100% (statements ET branches).
+    # Matrice Python 3.9–3.12 ; une jambe pinne WeeWX 4 (compat 4/5).
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        weewx: ["weewx"]
+        include:
+          - python-version: "3.9"
+            weewx: "weewx==4.10.2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install pytest pytest-cov meshtastic "${{ matrix.weewx }}"
+      - run: pytest   # addopts (pyproject) impose --cov-branch --cov-fail-under=100
+
+  integration:
+    # Protocole réel contre un node Meshtastic SIMULÉ (meshtasticd -s), sans matériel.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Intégration vs node simulé
+        run: >
+          docker compose -f test/docker-compose.test.yml up --build
+          --abort-on-container-exit --exit-code-from tester

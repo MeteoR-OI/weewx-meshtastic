@@ -1,0 +1,21 @@
+# Intégration : un node Meshtastic SIMULÉ (firmware natif `meshtasticd -s`, TCP
+# 4403, aucun matériel) + un conteneur `tester` qui lance le vrai code du plugin
+# contre lui. Lancer :
+#   docker compose -f test/docker-compose.test.yml up --build \
+#       --abort-on-container-exit --exit-code-from tester
+services:
+  node:
+    image: meshtastic/meshtasticd:latest
+    command: ["meshtasticd", "-s"]
+    expose:
+      - "4403"
+
+  tester:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile.tester
+    environment:
+      MESHTASTICD_HOST: node
+      MESHTASTICD_PORT: "4403"
+    depends_on:
+      - node
