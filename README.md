@@ -17,39 +17,42 @@ Implémentée en une `StdService` WeeWX. Cible : **WeeWX 4/5** (Python 3).
 ## Architecture
 
 ```
-        Davis Vantage Pro 2
-        (station météo)
+        Davis Vantage Pro 2  (station météo)
                 │  câble/USB — trames LOOP puis ARCHIVE (ex. toutes les 5 min)
                 ▼
-   ┌─────────────────────────────────────┐
-   │ WeeWX   (PC / Raspberry Pi)         │
-   │   ├─ pilote la station              │
-   │   └─ extension  weewx-meshtastic    │   ← ce dépôt (StdService)
-   └───────────────┬─────────────────────┘
-                   │  API Meshtastic — TCP/WiFi (défaut) OU BLE (nodes BT-only)
-                   │  à chaque ARCHIVE (cadence configurable) :
-                   │    • télémétrie EnvironmentMetrics  (temp · hum · press · vent)
-                   │    • [option] résumé texte  "PAM290 — 22°C · … · pluie1h/24h"
-                   ▼
-   ┌─────────────────────────────────────┐        DM: "météo / vent / pluie / …"
-   │ Node Meshtastic (n'importe quel     │◀───────────────────────────────┐
-   │  modèle : WiFi/TCP ou Bluetooth LE) │────────────────────────────────┘  réponse (bot)
-   │  = « station météo » du maillage    │
-   └───────────────┬─────────────────────┘
-                   │  LoRa  (radio maillée — fréquence/région gérée par le node : 868, 915, 433…)
-      ┌────────────┼───────────────────────────────┐
-      ▼            ▼                                ▼
-  autres       node-passerelle MQTT  ── MQTT ──▶  meshforge
-  nodes        (uplink LoRa → MQTT)               (carte + calque météo — phase 2)
-  (app :
-   télémétrie
-   + canal
-   « meteo »)
+   ┌──────────────────────────────────────────────────┐
+   │ WeeWX   (PC / Raspberry Pi)                      │
+   │   • pilote la station Davis                      │
+   │   • extension weewx-meshtastic (StdService)      │  ← ce dépôt
+   │   • bot DM : parse la commande reçue et          │
+   │     compose la réponse  ← TOUT est traité ICI    │
+   └────────────┬─────────────────────────────────────┘
+                │  API Meshtastic — TCP/WiFi (défaut) OU BLE (BT-only)
+                │  ↓ à chaque ARCHIVE : télémétrie EnvironmentMetrics
+                │       + [option] résumé texte  "PAM290 — 22°C · …"
+                │  ↑ DM reçu    ↓ réponse    (le node relaie, il ne calcule rien)
+                ▼
+   ┌──────────────────────────────────────────────────┐
+   │ Node Meshtastic « station météo » du maillage    │
+   │  (n'importe quel modèle : WiFi/TCP ou BLE)       │
+   │  RELAIS seulement — ne traite aucune commande    │
+   └────────────┬─────────────────────────────────────┘
+                │  LoRa (radio maillée — fréquence gérée par le node : 868/915/433…)
+      ┌─────────┴───────┬──────────────────┬───────────────────┐
+      ▼                 ▼                  ▼                   ▼
+      autres            node d'un          node-passerelle     meshforge
+      nodes             utilisateur qui    MQTT ── MQTT ──▶    (carte + calque
+      (voient la        envoie un DM                            météo — phase 2)
+       télémétrie)      « météo ? »
 ```
 
 - **Télémétrie** (structurée, par station) : le cœur du dispositif — à chaque ARCHIVE par défaut.
 - **Texte** sur le canal partagé `meteo` : optionnel (le canal peut réunir plusieurs stations).
-- **DM** : le node répond aux interrogations (best-effort, cf. « Robustesse »).
+- **DM (bot)** : un **autre** node (l'appli Meshtastic d'un utilisateur) envoie `météo ?` en
+  message direct. Le node « station météo » **ne traite rien** : il transmet le texte reçu à
+  WeeWX (TCP/BLE), et c'est **l'extension** (`_on_receive`) qui parse la commande et compose la
+  réponse à partir du dernier ARCHIVE ; la réponse repart WeeWX → node → LoRa → node demandeur
+  (best-effort, cf. « Robustesse »).
 - **Connexion** : ouverte à l'émission puis refermée (le node coupe les connexions oisives).
 
 ## Installation
