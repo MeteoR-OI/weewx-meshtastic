@@ -206,35 +206,54 @@ def test_service_init_dm_disabled():
 
 
 def test_new_archive_record_sends_and_toggles():
-    sink = mock.Mock()
-    svc = make_service(sink=sink)
-    svc.new_archive_record(mock.Mock(record=US_RECORD))
-    sink.send_env.assert_called_once()
-    sink.send_text.assert_called_once()
+    # Chaque archive rouvre une connexion fraîche (make_sink) puis émet.
+    fresh = mock.Mock()
+    svc = make_service(sink=mw.FakeSink())
+    with mock.patch.object(mw, "make_sink", return_value=fresh), \
+         mock.patch.object(mw, "_subscribe"):
+        svc.new_archive_record(mock.Mock(record=US_RECORD))
+    fresh.send_env.assert_called_once()
+    fresh.send_text.assert_called_once()
     assert svc.latest["temp_c"] == pytest.approx(20.0)
     # télémétrie et texte désactivés
-    sink2 = mock.Mock()
-    svc2 = make_service({"send_telemetry": "false", "send_text": "false"}, sink=sink2)
-    svc2.new_archive_record(mock.Mock(record=US_RECORD))
-    sink2.send_env.assert_not_called()
-    sink2.send_text.assert_not_called()
+    fresh2 = mock.Mock()
+    svc2 = make_service({"send_telemetry": "false", "send_text": "false"}, sink=mw.FakeSink())
+    with mock.patch.object(mw, "make_sink", return_value=fresh2), \
+         mock.patch.object(mw, "_subscribe"):
+        svc2.new_archive_record(mock.Mock(record=US_RECORD))
+    fresh2.send_env.assert_not_called()
+    fresh2.send_text.assert_not_called()
 
 
-def test_new_archive_record_reconnects_on_error():
-    sink = mock.Mock()
-    sink.send_env.side_effect = OSError("boom")
-    svc = make_service({"dry_run": "true"}, sink=sink)
-    with mock.patch.object(mw, "make_sink", return_value=mw.FakeSink()) as ms:
-        svc.new_archive_record(mock.Mock(record=US_RECORD))
-        ms.assert_called_once()
+def test_new_archive_record_send_error_is_logged():
+    fresh = mock.Mock()
+    fresh.send_env.side_effect = OSError("boom")
+    svc = make_service({"dry_run": "true"}, sink=mw.FakeSink())
+    with mock.patch.object(mw, "make_sink", return_value=fresh), \
+         mock.patch.object(mw, "_subscribe"):
+        svc.new_archive_record(mock.Mock(record=US_RECORD))  # loggé, pas de crash
 
 
-def test_reconnect_swallows_close_error():
-    sink = mock.Mock()
-    sink.close.side_effect = RuntimeError("nope")
-    svc = make_service(sink=sink)
-    with mock.patch.object(mw, "make_sink", return_value=mw.FakeSink()):
-        svc._reconnect()  # ne lève pas malgré close() qui casse
+def test_reconnect_swallows_close_error_and_resubscribes():
+    old = mock.Mock()
+    old.close.side_effect = RuntimeError("nope")
+    fresh = mock.Mock(spec=["send_env", "send_text", "send_dm", "close", "my_num"])
+    with mock.patch.object(mw, "_subscribe") as sub, \
+         mock.patch.object(mw, "make_sink", return_value=fresh):
+        svc = make_service(sink=old)  # __init__ souscrit (old = sink réel)
+        svc._reconnect()  # avale l'erreur de close() + re-souscrit (sink réel)
+    assert svc.sink is fresh
+    assert sub.called
+
+
+def test_reconnect_no_prior_sink_and_fake_skips_subscribe():
+    svc = make_service({"dry_run": "true"}, sink=mw.FakeSink())
+    svc.sink = None  # aucune connexion précédente -> pas de close()
+    with mock.patch.object(mw, "make_sink", return_value=mw.FakeSink()), \
+         mock.patch.object(mw, "_subscribe") as sub:
+        svc._reconnect()
+        sub.assert_not_called()  # FakeSink -> pas de souscription DM
+    assert isinstance(svc.sink, mw.FakeSink)
 
 
 def test_on_receive_branches():
@@ -266,35 +285,61 @@ def test_shutdown():
 
 
 # --------------------------------------------------------------------------- #
-# setup-channel + CLI
+# setup-channel + URL/QR + CLI
 # --------------------------------------------------------------------------- #
+def _lora():
+    from meshtastic.protobuf import config_pb2
+
+    return config_pb2.Config.LoRaConfig()
+
+
+def _real_channel(index):
+    # ch.settings/lora doivent être de vrais protobufs (append/CopyFrom).
+    from meshtastic.protobuf import channel_pb2
+
+    ch = mock.Mock()
+    ch.index = index
+    ch.settings = channel_pb2.ChannelSettings()
+    return ch
+
+
 def _node_iface(ch):
     iface = mock.Mock()
     node = mock.Mock()
     node.getDisabledChannel.return_value = ch
+    node.localConfig.lora = _lora()
     iface.getNode.return_value = node
     return iface, node
 
 
+def test_channel_url():
+    from meshtastic.protobuf import channel_pb2
+
+    s = channel_pb2.ChannelSettings()
+    s.name = "meteo"
+    url = mw.channel_url(s, _lora())
+    assert url.startswith("https://meshtastic.org/e/#")
+    assert "=" not in url.split("#", 1)[1]  # padding retiré
+
+
 def test_setup_channel_creates_secondary():
-    ch = mock.Mock()
-    ch.index = 3
-    iface, node = _node_iface(ch)
-    idx, psk_b64 = mw.setup_channel("h", "meteo", "random", interface_factory=lambda host: iface)
+    iface, node = _node_iface(_real_channel(3))
+    idx, psk_b64, url = mw.setup_channel(
+        "h", "meteo", "random", interface_factory=lambda host: iface
+    )
     assert idx == 3
     assert len(base64.b64decode(psk_b64)) == 32  # PSK 256 bits générée
+    assert url.startswith("https://meshtastic.org/e/#")
     node.writeChannel.assert_called_once_with(3)
     iface.close.assert_called_once()
 
 
 def test_setup_channel_provided_psk():
-    ch = mock.Mock()
-    ch.index = 1
     raw = base64.b64encode(b"z" * 16).decode()
-    ch.settings.psk = b"z" * 16
-    iface, _ = _node_iface(ch)
-    idx, _b64 = mw.setup_channel("h", "n", raw, interface_factory=lambda host: iface)
+    iface, _ = _node_iface(_real_channel(1))
+    idx, b64, _url = mw.setup_channel("h", "n", raw, interface_factory=lambda host: iface)
     assert idx == 1
+    assert base64.b64decode(b64) == b"z" * 16
 
 
 def test_setup_channel_no_free_slot():
@@ -304,11 +349,25 @@ def test_setup_channel_no_free_slot():
     iface.close.assert_called_once()
 
 
+def test_print_qr_with_and_without_lib():
+    import io
+
+    out = io.StringIO()
+    mw.print_qr("https://meshtastic.org/e/#abc", out=out)  # qrcode installé -> QR ASCII
+    assert out.getvalue().strip()
+    out2 = io.StringIO()
+    with mock.patch.dict("sys.modules", {"qrcode": None}):  # import qrcode -> ImportError
+        mw.print_qr("https://x", out=out2)
+    assert "pip install qrcode" in out2.getvalue()
+
+
 def test_main_setup_channel(capsys):
-    with mock.patch.object(mw, "setup_channel", return_value=(2, "QUJD")):
+    ret = (2, "QUJD", "https://meshtastic.org/e/#abc")
+    with mock.patch.object(mw, "setup_channel", return_value=ret):
         rc = mw.main(["setup-channel", "--host", "192.168.1.20", "--name", "meteo"])
     assert rc == 0
-    assert "index=2" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "index=2" in out and "meshtastic.org/e/#abc" in out
 
 
 def test_main_no_command():

@@ -49,7 +49,18 @@ slot libre ; le node redémarre ensuite) :
 
 ```bash
 python -m meshtastic_weather setup-channel --host 192.168.1.20 --name meteo
-# → affiche l'index (à mettre dans channel_index) et la PSK (à partager avec meshforge)
+```
+
+Affiche l'**index** (à reporter dans `channel_index`), la **PSK** (à partager avec meshforge),
+et un **lien + QR code** partageable du canal (`https://meshtastic.org/e/#…`) pour l'ajouter
+d'un scan sur d'autres appareils :
+
+```
+Canal 'meteo' créé : index=3
+PSK (base64) : t1BkNc7f…
+Lien/QR      : https://meshtastic.org/e/#CikSIL…
+█▀▀▀▀▀▀▀██▀▀█▀▀▀███▀████…   ← QR ASCII (nécessite `pip install qrcode`)
+→ mettre channel_index = 3 dans [MeshtasticWeather].
 ```
 
 ## Commandes DM
@@ -61,6 +72,12 @@ python -m meshtastic_weather setup-channel --host 192.168.1.20 --name meteo
 | `pluie` | taux + cumul du jour |
 | `temp` | température + humidité |
 | `aide` | liste des commandes |
+
+> **Robustesse / DM** : le node ferme les connexions TCP **inactives** (quelques dizaines de
+> secondes). L'extension ouvre donc une **connexion fraîche à chaque archive** (fiable pour la
+> pousse toutes les 5 min). Le bot **DM** n'écoute donc de façon fiable que dans la fenêtre qui
+> suit chaque archive ; pour un DM permanent, un daemon dédié à connexion maintenue serait à
+> ajouter (phase future).
 
 ## Transports
 
@@ -79,6 +96,17 @@ ruff check .                 # lint
 # Intégration contre un node Meshtastic SIMULÉ (aucun matériel) :
 docker compose -f test/docker-compose.test.yml up --build \
     --abort-on-container-exit --exit-code-from tester
+```
+
+### Test « live » : WeeWX Simulator → vrai node
+
+Fait tourner WeeWX (driver Simulator, archive 60 s) + l'extension dans un conteneur, en
+poussant vers un **vrai** node Meshtastic sur le LAN (par défaut `192.168.1.20`) :
+
+```bash
+docker build -t weewx-meshtastic-live -f test/live/Dockerfile .
+docker run --rm -e NODE_HOST=192.168.1.20 -e CHANNEL_INDEX=3 weewx-meshtastic-live
+# logs attendus : « prêt (sink=TcpSink) » puis « archive envoyée (TcpSink, canal 3) »
 ```
 
 La **CI** rejoue : lint, tests unitaires (matrice Python 3.9–3.12, WeeWX 5) avec

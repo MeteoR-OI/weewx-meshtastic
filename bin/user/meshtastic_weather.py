@@ -294,21 +294,28 @@ class MeshtasticWeather(StdService):
     def new_archive_record(self, event):
         n = normalize(event.record)
         self.latest = n
+        # Connexion FRAÎCHE à chaque archive : le node ferme les connexions TCP
+        # inactives (quelques dizaines de secondes) entre deux envois (5 min en
+        # prod) — une connexion persistante serait morte au moment d'émettre.
+        self._reconnect()
         try:
             if self.send_telemetry:
                 self.sink.send_env(n)
             if self.send_text:
                 self.sink.send_text(format_summary(n, self.station), self.channel_index)
+            log.info("archive envoyée (%s, canal %s)", type(self.sink).__name__, self.channel_index)
         except Exception as exc:
-            log.error("envoi échoué (%s) → reconnexion", exc)
-            self._reconnect()
+            log.error("envoi échoué : %s", exc)
 
     def _reconnect(self):
         try:
-            self.sink.close()
+            if self.sink is not None:
+                self.sink.close()
         except Exception:
             pass
         self.sink = make_sink(self._cfg)
+        if self.dm_enabled and not isinstance(self.sink, FakeSink):
+            _subscribe(self._on_receive)
 
     def _on_receive(self, packet, interface):
         try:
@@ -332,8 +339,22 @@ class MeshtasticWeather(StdService):
 # --------------------------------------------------------------------------- #
 # CLI : création du canal dédié via TCP (opt-in ; ne touche pas aux existants)
 # --------------------------------------------------------------------------- #
+def channel_url(settings, lora_config):
+    """URL partageable (meshtastic.org/e/#…) d'UN canal — pour QR/lien d'ajout.
+    N'encode que ce canal (+ la config LoRa), pas les autres canaux du node."""
+    from meshtastic.protobuf import apponly_pb2
+
+    cs = apponly_pb2.ChannelSet()
+    cs.settings.append(settings)
+    cs.lora_config.CopyFrom(lora_config)
+    raw = base64.urlsafe_b64encode(cs.SerializeToString()).decode("ascii")
+    raw = raw.replace("=", "").replace("+", "-").replace("/", "_")
+    return "https://meshtastic.org/e/#" + raw
+
+
 def setup_channel(host, name, psk=None, interface_factory=None):
-    """Ajoute un canal SECONDARY dans un slot libre. Retourne (index, psk_b64)."""
+    """Ajoute un canal SECONDARY dans un slot libre. Ne touche pas aux canaux
+    existants. Retourne (index, psk_b64, url_partageable)."""
     from meshtastic.protobuf import channel_pb2
 
     factory = interface_factory or _default_tcp_factory
@@ -347,9 +368,24 @@ def setup_channel(host, name, psk=None, interface_factory=None):
         ch.settings.psk = decode_psk(psk)
         ch.role = channel_pb2.Channel.Role.SECONDARY
         node.writeChannel(ch.index)
-        return ch.index, base64.b64encode(ch.settings.psk).decode("ascii")
+        url = channel_url(ch.settings, node.localConfig.lora)
+        return ch.index, base64.b64encode(ch.settings.psk).decode("ascii"), url
     finally:
         iface.close()
+
+
+def print_qr(url, out=None):
+    """Affiche un QR ASCII de `url` si la lib `qrcode` est là, sinon un rappel."""
+    stream = out or sys.stdout
+    try:
+        import qrcode
+    except ImportError:
+        stream.write("(pip install qrcode pour afficher le QR dans le terminal)\n")
+        return
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(url)
+    qr.make()
+    qr.print_ascii(out=stream, invert=True)
 
 
 def main(argv=None):
@@ -361,8 +397,11 @@ def main(argv=None):
     sc.add_argument("--psk", default="random")
     args = parser.parse_args(argv)
     if args.cmd == "setup-channel":
-        index, psk_b64 = setup_channel(args.host, args.name, args.psk)
-        print(f"Canal '{args.name}' créé : index={index} psk={psk_b64}")
+        index, psk_b64, url = setup_channel(args.host, args.name, args.psk)
+        print(f"Canal '{args.name}' créé : index={index}")
+        print(f"PSK (base64) : {psk_b64}")
+        print(f"Lien/QR      : {url}")
+        print_qr(url)
         print(f"→ mettre channel_index = {index} dans [MeshtasticWeather].")
         return 0
     parser.print_help()
