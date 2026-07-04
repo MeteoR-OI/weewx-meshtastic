@@ -184,75 +184,76 @@ def make_service(cfg=None, sink=None):
     return mw.MeshtasticWeather(engine, config, sink=sink)
 
 
-def test_service_init_fakesink_no_subscribe():
-    with mock.patch.object(mw, "_subscribe") as sub:
-        svc = make_service(sink=mw.FakeSink())
-        sub.assert_not_called()
-    assert svc.send_telemetry is True
+def test_init():
+    # __init__ n'ouvre AUCUNE connexion (sink = None jusqu'à la 1re archive).
+    svc = make_service()
+    assert svc.sink is None
+    assert svc.dm_enabled is False  # défaut opt-out
+    svc2 = make_service({"dm_enabled": "true"}, sink=mw.FakeSink())
+    assert isinstance(svc2.sink, mw.FakeSink)
+    assert svc2.dm_enabled is True
 
 
-def test_service_init_realsink_subscribes():
-    sink = mock.Mock(spec=["send_env", "send_text", "send_dm", "close", "my_num"])
-    with mock.patch.object(mw, "_subscribe") as sub:
-        make_service(sink=sink)
-        sub.assert_called_once()
-
-
-def test_service_init_dm_disabled():
-    sink = mock.Mock(spec=["send_env", "send_text", "send_dm", "close", "my_num"])
-    with mock.patch.object(mw, "_subscribe") as sub:
-        make_service({"dm_enabled": "false"}, sink=sink)
-        sub.assert_not_called()
-
-
-def test_new_archive_record_sends_and_toggles():
-    # Chaque archive rouvre une connexion fraîche (make_sink) puis émet.
+def test_new_archive_record_dm_off_open_send_close():
+    # Sans DM : ouvrir (make_sink) / envoyer / FERMER -> pas de connexion oisive.
     fresh = mock.Mock()
-    svc = make_service(sink=mw.FakeSink())
-    with mock.patch.object(mw, "make_sink", return_value=fresh), \
-         mock.patch.object(mw, "_subscribe"):
+    svc = make_service({"dm_enabled": "false"})
+    with mock.patch.object(mw, "make_sink", return_value=fresh):
         svc.new_archive_record(mock.Mock(record=US_RECORD))
     fresh.send_env.assert_called_once()
     fresh.send_text.assert_called_once()
+    fresh.close.assert_called_once()
+    assert svc.sink is None
     assert svc.latest["temp_c"] == pytest.approx(20.0)
-    # télémétrie et texte désactivés
-    fresh2 = mock.Mock()
-    svc2 = make_service({"send_telemetry": "false", "send_text": "false"}, sink=mw.FakeSink())
-    with mock.patch.object(mw, "make_sink", return_value=fresh2), \
-         mock.patch.object(mw, "_subscribe"):
-        svc2.new_archive_record(mock.Mock(record=US_RECORD))
-    fresh2.send_env.assert_not_called()
-    fresh2.send_text.assert_not_called()
+
+
+def test_new_archive_record_dm_on_keeps_open_and_subscribes():
+    fresh = mock.Mock(spec=["send_env", "send_text", "send_dm", "close", "my_num"])
+    svc = make_service({"dm_enabled": "true"})
+    with mock.patch.object(mw, "make_sink", return_value=fresh), \
+         mock.patch.object(mw, "_subscribe") as sub:
+        svc.new_archive_record(mock.Mock(record=US_RECORD))
+    fresh.send_env.assert_called_once()
+    fresh.close.assert_not_called()  # DM -> connexion gardée ouverte
+    assert svc.sink is fresh
+    sub.assert_called_once()
+
+
+def test_new_archive_record_toggles_off():
+    fresh = mock.Mock()
+    svc = make_service({"send_telemetry": "false", "send_text": "false", "dm_enabled": "false"})
+    with mock.patch.object(mw, "make_sink", return_value=fresh):
+        svc.new_archive_record(mock.Mock(record=US_RECORD))
+    fresh.send_env.assert_not_called()
+    fresh.send_text.assert_not_called()
 
 
 def test_new_archive_record_send_error_is_logged():
     fresh = mock.Mock()
     fresh.send_env.side_effect = OSError("boom")
-    svc = make_service({"dry_run": "true"}, sink=mw.FakeSink())
-    with mock.patch.object(mw, "make_sink", return_value=fresh), \
-         mock.patch.object(mw, "_subscribe"):
+    svc = make_service({"dm_enabled": "false"})
+    with mock.patch.object(mw, "make_sink", return_value=fresh):
         svc.new_archive_record(mock.Mock(record=US_RECORD))  # loggé, pas de crash
 
 
-def test_reconnect_swallows_close_error_and_resubscribes():
+def test_reconnect_dm_on_real_resubscribes():
     old = mock.Mock()
-    old.close.side_effect = RuntimeError("nope")
+    old.close.side_effect = RuntimeError("nope")  # avalé
     fresh = mock.Mock(spec=["send_env", "send_text", "send_dm", "close", "my_num"])
-    with mock.patch.object(mw, "_subscribe") as sub, \
-         mock.patch.object(mw, "make_sink", return_value=fresh):
-        svc = make_service(sink=old)  # __init__ souscrit (old = sink réel)
-        svc._reconnect()  # avale l'erreur de close() + re-souscrit (sink réel)
+    svc = make_service({"dm_enabled": "true"}, sink=old)
+    with mock.patch.object(mw, "make_sink", return_value=fresh), \
+         mock.patch.object(mw, "_subscribe") as sub:
+        svc._reconnect()
     assert svc.sink is fresh
-    assert sub.called
+    sub.assert_called_once()  # DM + sink réel -> souscription
 
 
-def test_reconnect_no_prior_sink_and_fake_skips_subscribe():
-    svc = make_service({"dry_run": "true"}, sink=mw.FakeSink())
-    svc.sink = None  # aucune connexion précédente -> pas de close()
+def test_reconnect_dm_on_fakesink_skips_subscribe():
+    svc = make_service({"dm_enabled": "true"})  # sink None au départ
     with mock.patch.object(mw, "make_sink", return_value=mw.FakeSink()), \
          mock.patch.object(mw, "_subscribe") as sub:
         svc._reconnect()
-        sub.assert_not_called()  # FakeSink -> pas de souscription DM
+        sub.assert_not_called()  # DM mais FakeSink -> pas de souscription
     assert isinstance(svc.sink, mw.FakeSink)
 
 
@@ -303,11 +304,17 @@ def _real_channel(index):
     return ch
 
 
-def _node_iface(ch):
+def _node_iface(ch, persisted_name="meteo"):
+    # `persisted_name` = ce que la RELECTURE (channels[index]) verra, pour simuler
+    # (ou non) la persistance après écriture.
     iface = mock.Mock()
     node = mock.Mock()
     node.getDisabledChannel.return_value = ch
     node.localConfig.lora = _lora()
+    if ch is not None:
+        verified = mock.Mock()
+        verified.settings.name = persisted_name
+        node.channels = {ch.index: verified}
     iface.getNode.return_value = node
     return iface, node
 
@@ -322,31 +329,47 @@ def test_channel_url():
     assert "=" not in url.split("#", 1)[1]  # padding retiré
 
 
-def test_setup_channel_creates_secondary():
-    iface, node = _node_iface(_real_channel(3))
+def test_safe_close_swallows():
+    iface = mock.Mock()
+    iface.close.side_effect = RuntimeError("x")
+    mw._safe_close(iface)  # ne lève pas
+
+
+def test_setup_channel_creates_secondary_confirmed():
+    iface, node = _node_iface(_real_channel(3), persisted_name="meteo")
     idx, psk_b64, url = mw.setup_channel(
-        "h", "meteo", "random", interface_factory=lambda host: iface
+        "h", "meteo", "random", interface_factory=lambda host: iface, delay=0
     )
     assert idx == 3
     assert len(base64.b64decode(psk_b64)) == 32  # PSK 256 bits générée
     assert url.startswith("https://meshtastic.org/e/#")
-    node.writeChannel.assert_called_once_with(3)
-    iface.close.assert_called_once()
+    node.writeChannel.assert_called_once_with(3)  # confirmé du 1er coup
 
 
 def test_setup_channel_provided_psk():
     raw = base64.b64encode(b"z" * 16).decode()
-    iface, _ = _node_iface(_real_channel(1))
-    idx, b64, _url = mw.setup_channel("h", "n", raw, interface_factory=lambda host: iface)
+    iface, _ = _node_iface(_real_channel(1), persisted_name="n")
+    idx, b64, _url = mw.setup_channel(
+        "h", "n", raw, interface_factory=lambda host: iface, delay=0
+    )
     assert idx == 1
     assert base64.b64decode(b64) == b"z" * 16
 
 
 def test_setup_channel_no_free_slot():
     iface, _ = _node_iface(None)
-    with pytest.raises(RuntimeError):
-        mw.setup_channel("h", "n", interface_factory=lambda host: iface)
-    iface.close.assert_called_once()
+    with pytest.raises(RuntimeError, match="aucun canal libre"):
+        mw.setup_channel("h", "n", interface_factory=lambda host: iface, delay=0)
+
+
+def test_setup_channel_retries_until_confirmed_then_gives_up():
+    # La relecture ne voit jamais le nom -> non persisté -> réessais puis échec.
+    iface, node = _node_iface(_real_channel(3), persisted_name="")
+    with pytest.raises(RuntimeError, match="non confirmée"):
+        mw.setup_channel(
+            "h", "meteo", interface_factory=lambda host: iface, attempts=2, delay=0
+        )
+    assert node.writeChannel.call_count == 2  # a bien réessayé
 
 
 def test_print_qr_with_and_without_lib():

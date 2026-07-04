@@ -283,13 +283,14 @@ class MeshtasticWeather(StdService):
         self.channel_index = int(cfg.get("channel_index", 0))
         self.send_telemetry = as_bool(cfg.get("send_telemetry"), True)
         self.send_text = as_bool(cfg.get("send_text"), True)
-        self.dm_enabled = as_bool(cfg.get("dm_enabled"), True)
+        self.dm_enabled = as_bool(cfg.get("dm_enabled"), False)
         self.latest = None
-        self.sink = sink if sink is not None else make_sink(cfg)
-        if self.dm_enabled and not isinstance(self.sink, FakeSink):
-            _subscribe(self._on_receive)
+        # AUCUNE connexion au démarrage : une connexion oisive meurt et sa reliquat
+        # côté node fait échouer (broken pipe) la reconnexion suivante. On ouvre
+        # donc au moment d'émettre (1re archive), cf. new_archive_record/_reconnect.
+        self.sink = sink
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
-        log.info("MeshtasticWeather %s prêt (sink=%s)", VERSION, type(self.sink).__name__)
+        log.info("MeshtasticWeather %s prêt (dm=%s)", VERSION, self.dm_enabled)
 
     def new_archive_record(self, event):
         n = normalize(event.record)
@@ -306,13 +307,23 @@ class MeshtasticWeather(StdService):
             log.info("archive envoyée (%s, canal %s)", type(self.sink).__name__, self.channel_index)
         except Exception as exc:
             log.error("envoi échoué : %s", exc)
+        finally:
+            # Sans DM : ouvrir/envoyer/FERMER — aucune connexion oisive, donc pas
+            # de « reader timed out » toutes les minutes. Avec DM : on garde la
+            # connexion ouverte pour écouter (au prix de ce bruit de lecteur).
+            if not self.dm_enabled:
+                self._close_current()
 
-    def _reconnect(self):
+    def _close_current(self):
         try:
             if self.sink is not None:
                 self.sink.close()
         except Exception:
             pass
+        self.sink = None
+
+    def _reconnect(self):
+        self._close_current()
         self.sink = make_sink(self._cfg)
         if self.dm_enabled and not isinstance(self.sink, FakeSink):
             _subscribe(self._on_receive)
@@ -330,10 +341,7 @@ class MeshtasticWeather(StdService):
             log.error("DM ignoré : %s", exc)
 
     def shutDown(self):
-        try:
-            self.sink.close()
-        except Exception:
-            pass
+        self._close_current()
 
 
 # --------------------------------------------------------------------------- #
@@ -352,26 +360,50 @@ def channel_url(settings, lora_config):
     return "https://meshtastic.org/e/#" + raw
 
 
-def setup_channel(host, name, psk=None, interface_factory=None):
-    """Ajoute un canal SECONDARY dans un slot libre. Ne touche pas aux canaux
-    existants. Retourne (index, psk_b64, url_partageable)."""
+def _safe_close(iface):
+    try:
+        iface.close()
+    except Exception:
+        pass
+
+
+def _channel_name_at(host, index, factory):
+    """Relit (connexion fraîche) le nom du canal `index` pour confirmer l'écriture."""
+    iface = factory(host)
+    try:
+        return iface.getNode("^local").channels[index].settings.name
+    finally:
+        _safe_close(iface)
+
+
+def setup_channel(host, name, psk=None, interface_factory=None, attempts=6, delay=4):
+    """Ajoute un canal SECONDARY dans un slot libre, sans toucher aux existants.
+    Le node peut couper la connexion pendant l'écriture admin (broken pipe) →
+    on RÉESSAIE jusqu'à confirmation par relecture après reconnexion. Retourne
+    (index, psk_b64, url_partageable)."""
     from meshtastic.protobuf import channel_pb2
 
     factory = interface_factory or _default_tcp_factory
-    iface = factory(host)
-    try:
-        node = iface.getNode("^local")
-        ch = node.getDisabledChannel()
-        if ch is None:
-            raise RuntimeError("aucun canal libre sur le node")
-        ch.settings.name = name
-        ch.settings.psk = decode_psk(psk)
-        ch.role = channel_pb2.Channel.Role.SECONDARY
-        node.writeChannel(ch.index)
-        url = channel_url(ch.settings, node.localConfig.lora)
-        return ch.index, base64.b64encode(ch.settings.psk).decode("ascii"), url
-    finally:
-        iface.close()
+    key = decode_psk(psk)
+    for _ in range(attempts):
+        iface = factory(host)
+        try:
+            node = iface.getNode("^local")
+            ch = node.getDisabledChannel()
+            if ch is None:
+                raise RuntimeError("aucun canal libre sur le node")
+            index = ch.index
+            ch.settings.name = name
+            ch.settings.psk = key
+            ch.role = channel_pb2.Channel.Role.SECONDARY
+            node.writeChannel(index)
+            url = channel_url(ch.settings, node.localConfig.lora)
+        finally:
+            _safe_close(iface)
+        time.sleep(delay)
+        if _channel_name_at(host, index, factory) == name:
+            return index, base64.b64encode(key).decode("ascii"), url
+    raise RuntimeError(f"écriture du canal non confirmée après {attempts} essais")
 
 
 def print_qr(url, out=None):

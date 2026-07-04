@@ -26,7 +26,7 @@ class MeshtasticWeatherInstaller(ExtensionInstaller):
                     "station_name": "Ma station",
                     "send_telemetry": "true",
                     "send_text": "true",
-                    "dm_enabled": "true",
+                    "dm_enabled": "false",
                     "dry_run": "false",
                 }
             },

@@ -43,7 +43,7 @@ if ! grep -q '^\[MeshtasticWeather\]' "$CONF"; then
     station_name = "Sim Docker"
     send_telemetry = true
     send_text = true
-    dm_enabled = true
+    dm_enabled = false
     dry_run = false
 EOF
 fi

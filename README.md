@@ -36,7 +36,7 @@ Puis dans `weewx.conf` :
     station_name = "Ma station"
     send_telemetry = true
     send_text = true
-    dm_enabled = true
+    dm_enabled = false         # true = bot DM (garde la connexion ouverte, cf. « Robustesse »)
     dry_run = false            # true = logue au lieu d'émettre (tests hors-ligne)
 ```
 
@@ -74,10 +74,13 @@ Lien/QR      : https://meshtastic.org/e/#CikSIL…
 | `aide` | liste des commandes |
 
 > **Robustesse / DM** : le node ferme les connexions TCP **inactives** (quelques dizaines de
-> secondes). L'extension ouvre donc une **connexion fraîche à chaque archive** (fiable pour la
-> pousse toutes les 5 min). Le bot **DM** n'écoute donc de façon fiable que dans la fenêtre qui
-> suit chaque archive ; pour un DM permanent, un daemon dédié à connexion maintenue serait à
-> ajouter (phase future).
+> secondes), ce que la lib meshtastic logue en `ERROR … reader … timed out`. Par défaut
+> (`dm_enabled = false`) l'extension **ouvre / envoie / ferme** à chaque archive : aucune
+> connexion oisive, donc **pas de bruit**, et une pousse fiable toutes les 5 min. Activer le
+> bot **DM** (`dm_enabled = true`) **maintient la connexion ouverte** pour écouter — au prix de
+> ce message de lecteur périodique, et l'écoute n'est fiable que peu après chaque archive. Pour
+> un DM permanent et propre, un daemon dédié (connexion maintenue avec keepalive) est à ajouter
+> (phase future).
 
 ## Transports
 
